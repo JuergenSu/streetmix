@@ -1,5 +1,5 @@
 const config = require('config')
-const uuid = require('uuid')
+const uuidv1 = require('uuid/v1')
 const Twitter = require('twitter')
 const cloudinary = require('cloudinary')
 const { ERRORS, asUserJson } = require('../../../lib/util')
@@ -10,7 +10,7 @@ const Op = Sequelize.Op
 
 exports.post = async function (req, res) {
   let loginToken = null
-  const hasPriorCall = !!(res.mainData && res.mainData.id)
+  const hasPriorCall = false
 
   const handleCreateUser = function (err, user) {
     if (err) {
@@ -21,7 +21,6 @@ exports.post = async function (req, res) {
     const userJson = { id: user.id, loginToken: loginToken }
     logger.info({ user: userJson }, 'New user created.')
     res.header('Location', config.restapi.baseuri + '/v1/users/' + user.id)
-    // res.status(201).send(userJson)
     if (hasPriorCall) {
       res.send(userJson)
     } else {
@@ -29,13 +28,14 @@ exports.post = async function (req, res) {
     }
   } // END function - handleCreateUser
 
-  const handleUpdateUser = function (err, user) {
+  const handleUpdateUserError = function (err) {
     if (err) {
       logger.error(err)
       res.status(500).json({ status: 500, msg: 'Could not update user.' })
-      return
     }
+  }
 
+  const handleUpdateUser = function (user) {
     const userJson = { id: user.id, loginToken: loginToken }
     logger.info({ user: userJson }, 'Existing user issued new login token.')
 
@@ -53,7 +53,7 @@ exports.post = async function (req, res) {
       if (credentials.auth0_id) {
         user = await User.findOne({ where: { id: credentials.screenName } })
       }
-      loginToken = hasPriorCall ? res.mainData.loginToken : uuid.v1()
+      loginToken = uuidv1()
       if (!user) {
         const newUserData = {
           id: credentials.screenName,
@@ -68,59 +68,28 @@ exports.post = async function (req, res) {
         user.auth0_id = credentials.auth0_id
         user.profile_image_url = credentials.profile_image_url
         if (user.login_tokens) {
-          user.login_tokens.push(loginToken)
+          const newArray = user.login_tokens.concat(loginToken)
+          user.login_tokens = newArray
         } else {
           user.login_tokens = [loginToken]
         }
-        user.save().then(handleUpdateUser)
+
+        try {
+          // await User.update(user, { where: { id: credentials.screenName } })
+          await user.save()
+          handleUpdateUser(user)
+        } catch (err) {
+          handleUpdateUserError(err)
+        }
       }
     } catch (err) {
       logger.error(err)
-      console.log(err)
       res.status(500).json({
         status: 500,
         msg: 'Error finding user with Auth Twitter Sign-in.'
       })
     }
   } // END function - handleAuth0TwitterSignIn
-
-  const handleTwitterSignIn = async function (credentials) {
-    try {
-      let user
-      if (credentials.auth0_id) {
-        user = await User.findOne({ where: { id: credentials.screenName } })
-      }
-      loginToken = hasPriorCall ? res.mainData.loginToken : uuid.v1()
-      if (!user) {
-        const newUserData = {
-          id: credentials.screenName,
-          _id: credentials.auth0_id.split('|')[1],
-          auth0_id: credentials.auth0_id,
-          login_tokens: [loginToken],
-          profile_image_url: credentials.profile_image_url
-        }
-        User.create(newUserData).then(handleCreateUser)
-      } else {
-        user.id = credentials.screenName
-        user.auth0_id = credentials.auth0_id
-        user.profile_image_url = credentials.profile_image_url
-        if (user.login_tokens) {
-          user.login_tokens.push(loginToken)
-        } else {
-          user.login_tokens = [loginToken]
-        }
-        user.save().then(handleUpdateUser)
-      }
-    } catch (err) {
-      logger.error(err)
-      console.log(err)
-      res.status(500).json({
-        status: 500,
-        msg: 'Error finding user with twitter screenName.'
-      })
-    }
-  } // END function - handleTwitterSignIn
-
   /**
    * Returns a randomly-generated 4-digit string of a number between 0000 and 9999
    *
@@ -163,13 +132,13 @@ exports.post = async function (req, res) {
   }
 
   const handleAuth0SignIn = async function (credentials) {
+    console.log('handleAuth0SignIn', credentials)
     try {
       let user
       if (credentials.auth0_id) {
         user = await User.findOne({ where: { auth0_id: credentials.auth0_id } })
       }
-      // console.log('handleAuth0SignIn', credentials);
-      loginToken = hasPriorCall ? res.mainData.loginToken : uuid.v1()
+      loginToken = uuidv1()
       if (!user) {
         const numOfUser = await User.findOne({
           where: { id: credentials.nickname }
@@ -199,7 +168,6 @@ exports.post = async function (req, res) {
         }
       } else {
         const profileImageUrl = await handleUserProfileImage(user, credentials)
-
         user.auth0_id = credentials.auth0_id
         user.profile_image_url = profileImageUrl
         user.email = credentials.email
@@ -207,11 +175,16 @@ exports.post = async function (req, res) {
           user.login_tokens = []
         }
         user.login_tokens.push(loginToken)
-        user.save().then(handleUpdateUser)
+        try {
+          await user.save()
+          handleUpdateUser(user)
+        } catch (err) {
+          handleUpdateUserError(err)
+        }
       }
     } catch (err) {
+      console.log('handleAuth0SignIn had error', err)
       logger.error(err)
-      console.log(err)
       res
         .status(500)
         .json({ status: 500, msg: 'Error finding user with Auth0 ID.' })
@@ -227,12 +200,9 @@ exports.post = async function (req, res) {
   }
 
   logger.info(body)
-  if (Object.prototype.hasOwnProperty.call(body, 'twitter')) {
-    handleTwitterSignIn(body.twitter)
-  } else if (Object.prototype.hasOwnProperty.call(body, 'auth0_twitter')) {
+  if (Object.prototype.hasOwnProperty.call(body, 'auth0_twitter')) {
     handleAuth0TwitterSignIn(body.auth0_twitter)
   } else if (Object.prototype.hasOwnProperty.call(body, 'auth0')) {
-    console.log({ auth0: body.auth0 }, 'should have auth0 auth0_id?')
     handleAuth0SignIn(body.auth0)
   } else {
     res.status(400).json({ status: 400, msg: 'Unknown sign-in method used.' })
@@ -241,12 +211,9 @@ exports.post = async function (req, res) {
 
 exports.get = async function (req, res) {
   // Flag error if user ID is not provided
-  if (!req.params.user_id) {
-    res.status(400).json({ status: 400, msg: 'Please provide user ID.' })
-    return
-  }
   const userId = req.params.user_id
   const handleFindUser = function (user) {
+    console.log('handleFindUser', user)
     let twitterApiClient
     try {
       twitterApiClient = new Twitter({
@@ -261,19 +228,14 @@ exports.get = async function (req, res) {
     }
 
     const sendUserJson = function (data) {
+      console.log({ data, user })
       if (data) {
         user.profileImageUrl = data.twitter_profile_image_url
       } else {
         user.profileImageUrl = user.profile_image_url
       }
-
-      const hasPriorCall = !!(res.mainData && res.mainData.id)
-      if (hasPriorCall) {
-        res.send(asUserJson(data || user))
-      } else {
-        res.status(200).send(asUserJson(data || user))
-      }
-    } // END function - sendUserJson
+      res.status(200).send(asUserJson(data || user))
+    }
 
     let responseAlreadySent = false
 
@@ -331,6 +293,7 @@ exports.get = async function (req, res) {
   } // END function - handleFindUser
 
   const handleError = function (error) {
+    console.log('handleError', error)
     switch (error) {
       case ERRORS.USER_NOT_FOUND:
         res.status(404).json({ status: 404, msg: 'User not found.' })
@@ -348,23 +311,6 @@ exports.get = async function (req, res) {
     }
   }
 
-  const findUserByLoginToken = async function (loginToken) {
-    let user
-    try {
-      user = await User.findOne({
-        where: { login_tokens: { [Op.contains]: [loginToken] } }
-      })
-    } catch (err) {
-      logger.error(err)
-      throw new Error(ERRORS.CANNOT_GET_USER)
-    }
-
-    if (!user) {
-      throw new Error(ERRORS.UNAUTHORISED_ACCESS)
-    }
-    return user
-  }
-
   const findUserById = async function (userId) {
     let user
     try {
@@ -374,21 +320,45 @@ exports.get = async function (req, res) {
       throw new Error(ERRORS.CANNOT_GET_USER)
     }
 
+    // if enabled, returns 401 for any attempt to get another user's data
+    // if (user.login_tokens.indexOf(req.loginToken) === -1) {
+    //   res.status(401).end()
+    //   return
+    // }
     if (!user) {
       throw new Error(ERRORS.USER_NOT_FOUND)
     }
+
     return user
   }
 
-  if (req.loginToken) {
-    findUserByLoginToken(req.loginToken)
-      .then(handleFindUser)
-      .catch(handleError)
-  } else {
-    console.log('finding by ID', userId)
-    findUserById(userId)
-      .then(handleFindUser)
-      .catch(handleError)
+  if (!userId) {
+    console.log('no user ID')
+    const callingUser = await User.findOne({
+      where: { login_tokens: { [Op.contains]: [req.loginToken] } }
+    })
+
+    const isAdmin =
+      callingUser &&
+      callingUser.login_tokens &&
+      callingUser.login_tokens.indexOf &&
+      callingUser.login_tokens.indexOf(req.loginToken) !== -1
+
+    if (isAdmin) {
+      const userList = await User.findAll({ raw: true })
+      res.status(200).send(asUserJson(userList))
+      return
+    }
+
+    res.status(401).json({ status: 401, msg: 'Please provide user ID.' })
+    return
+  }
+
+  try {
+    const result = await findUserById(userId)
+    handleFindUser(result)
+  } catch (err) {
+    handleError(err)
   }
 } // END function - exports.get
 
@@ -396,19 +366,30 @@ exports.delete = async function (req, res) {
   const userId = req.params.user_id
   let user
   try {
-    user = await User.findByPk(userId)
+    user = await User.findOne({ where: { id: userId } })
   } catch (err) {
     logger.error(err)
     res.status(500).json({ status: 500, msg: 'Error finding user.' })
   }
 
   if (!user) {
-    res.status(404).json({ status: 404, msg: 'User not fouloginTokennd.' })
+    res.status(404).json({ status: 404, msg: 'User not found.' })
     return
   }
 
   const idx = user.login_tokens.indexOf(req.loginToken)
-  if (idx === -1) {
+
+  const callingUser = await User.findOne({
+    where: { login_tokens: { [Op.contains]: [req.loginToken] } }
+  })
+
+  const isAdmin =
+    callingUser &&
+    callingUser.login_tokens &&
+    callingUser.login_tokens.indexOf &&
+    callingUser.login_tokens.indexOf(req.loginToken) !== -1
+
+  if (idx === -1 && !isAdmin) {
     res.status(401).end()
     return
   }
@@ -436,7 +417,7 @@ exports.put = async function (req, res) {
   let user
 
   try {
-    user = await User.findByPk(userId)
+    user = await User.find({ where: { id: userId } })
   } catch (err) {
     logger.error(err)
     res.status(500).json({ status: 500, msg: 'Error finding user.' })
@@ -447,7 +428,22 @@ exports.put = async function (req, res) {
     return
   }
 
-  if (user.login_tokens.indexOf(req.loginToken) === -1) {
+  const callingUser = await User.findOne({
+    where: { login_tokens: { [Op.contains]: [req.loginToken] } }
+  })
+
+  const isAdmin =
+    callingUser &&
+    callingUser.login_tokens &&
+    callingUser.login_tokens.indexOf &&
+    callingUser.login_tokens.indexOf(req.loginToken) !== -1
+
+  if (!isAdmin && user.login_tokens.indexOf(req.loginToken) === -1) {
+    console.log('UGH WE SHOULD BE RETURNING ADMIN TRUE', {
+      tokens: callingUser.login_tokens,
+      isAdmin,
+      c: callingUser.toJSON()
+    })
     res.status(401).end()
     return
   }
@@ -464,3 +460,43 @@ exports.put = async function (req, res) {
         .json({ status: 500, msg: 'Could not update user information.' })
     })
 } // END function - exports.put
+
+exports.logout = async function (req, res) {
+  // Flag error if user ID is not provided
+  if (!req.params.user_id) {
+    res.status(400).json({ status: 400, msg: 'Please provide user ID.' })
+    return
+  }
+
+  const userId = req.params.user_id
+
+  let user
+
+  try {
+    user = await User.findOne({ where: { id: userId } })
+  } catch (err) {
+    logger.error(err)
+    res.status(500).json({ status: 500, msg: 'Error finding user.' })
+  }
+
+  if (!user) {
+    res.status(404).json({ status: 404, msg: 'User not found.' })
+    return
+  }
+
+  const idx = user.login_tokens.indexOf(req.loginToken)
+  if (idx === -1) {
+    res.status(401).end()
+    return
+  }
+  user.login_tokens.splice(idx, 1)
+
+  User.update(user, { where: { id: userId }, returning: true })
+    .then((user) => {
+      res.status(204).end()
+    })
+    .catch((err) => {
+      logger.error(err)
+      res.status(500).json({ status: 500, msg: 'Could not sign-out user.' })
+    })
+} // END function - exports.delete
