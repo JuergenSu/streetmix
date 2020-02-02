@@ -1,9 +1,62 @@
 /* eslint-env jest */
 import request from 'supertest'
 import { setupMockServer } from '../../../../test/helpers/setup-mock-server'
-import users from '../users'
+import users from '../users_pg'
 
-jest.mock('../../../db/models/user')
+jest.mock('twitter')
+jest.mock('../../../db/models', () => {
+  var SequelizeMock = require('sequelize-mock')
+  var DBConnectionMock = new SequelizeMock()
+  var UserMock = DBConnectionMock.define(
+    'user',
+    {
+      email: 'email@example.com',
+      login_tokens: ['xxxxxxxx-xxxx-xxxx-xxxx-0000000000000'],
+      id: 'user1'
+    },
+    {}
+  )
+
+  const ADMIN_TOKEN = 'xxxxxxxx-xxxx-xxxx-xxxx-3333333333333'
+  const ADMIN_DEFAULTS = {
+    email: 'email@example.com',
+    login_tokens: [ADMIN_TOKEN],
+    id: 'user1',
+    roles: ['ADMIN']
+  }
+
+  const DEFAULT_TOKEN = 'xxxxxxxx-xxxx-xxxx-xxxx-1111111111111'
+  const USER_DEFAULTS = {
+    ...ADMIN_DEFAULTS,
+    login_tokens: [DEFAULT_TOKEN],
+    roles: []
+  }
+
+  UserMock.$queryInterface.$useHandler(function (query, queryOptions, done) {
+    if (
+      queryOptions[0] &&
+      queryOptions[0].where &&
+      queryOptions[0].where.login_tokens &&
+      queryOptions[0].where.login_tokens[0] &&
+      queryOptions[0].where.login_tokens[0] === ADMIN_TOKEN
+    ) {
+      return UserMock.build(ADMIN_DEFAULTS)
+    } else if (
+      queryOptions[0] &&
+      queryOptions[0].where &&
+      queryOptions[0].where.login_tokens &&
+      queryOptions[0].where.login_tokens[0] &&
+      queryOptions[0].where.login_tokens[0] === DEFAULT_TOKEN
+    ) {
+      return UserMock.build(USER_DEFAULTS)
+    }
+
+    return UserMock.build(ADMIN_DEFAULTS)
+  })
+
+  return { User: UserMock, Sequelize: { Op: jest.fn() } }
+})
+
 jest.mock('../../../../lib/logger')
 
 // Fake user info to test the API

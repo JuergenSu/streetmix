@@ -126,7 +126,6 @@ exports.post = async function (req, res) {
       if (!origStreet || origStreet.status === 'DELETED') {
         throw new Error(ERRORS.STREET_NOT_FOUND)
       }
-
       const namespacedId = await makeNamespacedId()
       street.namespaced_id = namespacedId
 
@@ -236,7 +235,7 @@ exports.delete = async function (req, res) {
   let street
 
   try {
-    street = await Street.findByPk(req.params.street_id)
+    street = await Street.findOne({ where: { id: req.params.street_id } })
   } catch (err) {
     logger.error(err)
     handleErrors(ERRORS.STREET_NOT_FOUND)
@@ -497,7 +496,9 @@ exports.put = async function (req, res) {
     if (body.originalStreetId) {
       let origStreet
       try {
-        origStreet = await Street.findByPk(body.originalStreetId)
+        origStreet = await Street.findOne({
+          where: { id: body.originalStreetId }
+        })
       } catch (err) {
         logger.error(err)
         handleErrors(ERRORS.CANNOT_UPDATE_STREET)
