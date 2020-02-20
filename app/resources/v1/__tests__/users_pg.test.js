@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import request from 'supertest'
 import { setupMockServer } from '../../../../test/helpers/setup-mock-server'
-import users from '../users_pg'
+import users from '../users'
 
 jest.mock('twitter')
 jest.mock('../../../db/models', () => {

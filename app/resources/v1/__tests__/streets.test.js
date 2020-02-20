@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import request from 'supertest'
 import { setupMockServer } from '../../../../test/helpers/setup-mock-server'
-import streets from '../streets_pg'
+import streets from '../streets'
 
 jest.mock('../../../db/models', () => {
   var SequelizeMock = require('sequelize-mock')
